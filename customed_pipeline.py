@@ -62,12 +62,12 @@ class CustomedPipeline():
 
         return inputs
 
-    def forward(self, model_inputs, max_length = 500):
+    def forward(self, model_inputs):
         input_ids = model_inputs['input_ids']
         attention_mask = model_inputs['attention_mask']
         prompt_len = model_inputs['prompts']
 
-        generated_sequence = self.model.generate(input_ids=input_ids, attention_mask=attention_mask,max_length=max_length)
+        generated_sequence = self.model.generate(input_ids=input_ids, attention_mask=attention_mask,max_length=prompt_len+5)
         return {"generated_sequence": generated_sequence, "prompt_len" :prompt_len}
 
     def postprocess(self, model_outputs, clean_up_tokenization_spaces=True):
