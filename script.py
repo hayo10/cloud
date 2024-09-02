@@ -2,9 +2,11 @@ from datasets import load_dataset
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from pipeline_meta import CustomedPipeline
+#from pipeline_meta import CustomedPipeline
+from customed_pipeline import CustomedPipeline
 from hf import NewPhi3Config
-from model_meta import CustomedPhi3ForCausalLM
+#from model_meta import CustomedPhi3ForCausalLM
+from model import CustomedPhi3ForCausalLM
 
 
 torch.random.manual_seed(0)
