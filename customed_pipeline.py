@@ -10,12 +10,6 @@ Original file is located at
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 from transformers import Phi3Config
-messages = [[
-    {"role": "user", "content": "Can you provide ways to eat combinations of bananas and dragonfruits?"},
-    {"role": "assistant", "content": "Sure! Here are some ways to eat bananas and dragonfruits together: 1. Banana and dragonfruit smoothie: Blend bananas and dragonfruits together with some milk and honey. 2. Banana and dragonfruit salad: Mix sliced bananas and dragonfruits together with some lemon juice and honey."},
-    {"role": "user", "content": "What about solving an 2x + 3 = 7 equation?"},
-],
-[{"role": "user", "content": "Can you provide ways to eat combinations of bananas and dragonfruits?"}]]
 
 import gc
 gc.collect()
@@ -42,57 +36,64 @@ class CustomedPipeline():
         self.tokenizer = AutoTokenizer.from_pretrained(model_id)
         self.model =  model
 
-    def preprocess(
-            self,
-            prompt_text,
-            prefix="",
-            handle_long_generation=None,
-            add_special_tokens=None
-            ):
+    # def preprocess(
+    #         self,
+    #         prompt_text,
+    #         prefix="",
+    #         handle_long_generation=None,
+    #         add_special_tokens=None
+    #         ):
 
-        inputs = self.tokenizer.apply_chat_template(
-                prompt_text,
-                add_generation_prompt=True,
-                tokenize=True,
-                return_tensors="pt",
-            return_dict=True,
-                padding=True
-            ).to('cuda')
-        inputs['prompts'] = inputs['input_ids'].shape[-1]
+    #     inputs = self.tokenizer.apply_chat_template(
+    #             prompt_text,
+    #             add_generation_prompt=True,
+    #             tokenize=True,
+    #             return_tensors="pt",
+    #         return_dict=True,
+    #             padding=True
+    #         ).to('cuda')
+    #     inputs['prompts'] = inputs['input_ids'].shape[-1]
 
-        return inputs
+    #     return inputs
 
-    def forward(self, model_inputs):
-        input_ids = model_inputs['input_ids']
-        attention_mask = model_inputs['attention_mask']
-        prompt_len = model_inputs['prompts']
+    def forward(self, input_ids, attention_mask):
+        input_ids = input_ids[0].to('cuda')
+        attention_mask = attention_mask[0].to('cuda')
+        prompt_len = input_ids.shape[1]
 
-        generated_sequence = self.model.generate(input_ids=input_ids, attention_mask=attention_mask,max_length=prompt_len+5)
+        generated_sequence = self.model.generate(input_ids=input_ids, attention_mask=attention_mask,max_length=prompt_len+15)
         return {"generated_sequence": generated_sequence, "prompt_len" :prompt_len}
 
-    def postprocess(self, model_outputs, clean_up_tokenization_spaces=True):
+    def find_pattern(self, text):
+        cnt = 0
+        idx = []
+        for i in range(len(text)-1,0,-1):
+            if text[i] ==32001 and text[i-1] == 32007:
+                idx.append(i)
+                if len(idx) == 2:
+                    break
+        if len(idx) == 2:
+            result = text[idx[1]+1:idx[0]-1]
+        else:
+            result = text[idx[0]+1:]
+        return result
+
+    def postprocess(self,model_outputs, labels, clean_up_tokenization_spaces=True):
         generated_sequence = model_outputs["generated_sequence"]
-        prompt_len = model_outputs["prompt_len"]
 
         result = []
 
+        correct = 0
+
         for i, text in enumerate(generated_sequence):
-            eos_pos = (text == self.tokenizer.eos_token_id).nonzero(as_tuple=True)[0]
+            answer = self.find_pattern(text)
+            decoded_answer = self.tokenizer.decode(answer)
+            if decoded_answer == labels[i]:
+                correct += 1
+            result.append([{'generated':decoded_answer, 'label' : labels[i]}])
+            
 
-            if len(eos_pos) > 0:
-                eos_after_prompt = next((pos.item() for pos in eos_pos if pos.item() > prompt_len), None)
-
-                if eos_after_prompt is not None:
-                    text = text[prompt_len:eos_after_prompt-1]
-                else:
-                    text = text[prompt_len:]
-            else:
-                text = text[prompt_len:]
-
-            #decoded_text = self.tokenizer.decode(text, skip_special_tokens=True)
-            decoded_text = self.tokenizer.decode(text)
-            result.append([{'generated':decoded_text}])
-
+        print('accuracy : ',correct/len(generated_sequence))
         return result
 
 
