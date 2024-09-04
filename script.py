@@ -1,6 +1,6 @@
 from datasets import load_dataset
 import torch
-from transformers import AutoTokenizer, pipeline
+from transformers import AutoTokenizer
 import torch
 import gc
 from customed_pipeline import CustomedPipeline
