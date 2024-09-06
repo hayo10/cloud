@@ -1,22 +1,40 @@
 from datasets import load_dataset
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoTokenizer
 import torch
-import gc
 from customed_pipeline import CustomedPipeline
 from hf import NewPhi3Config
-from safetensors import safe_open
 from model import CustomedPhi3ForCausalLM
 import gc
-import os
-import time
+import requests
 
 torch.random.manual_seed(0)
-cur_dir = os.getcwd()
-model_id = "microsoft/Phi-3-medium-4k-instruct"
-model = AutoModelForCausalLM.from_pretrained(model_id, cache_dir=cur_dir)
-tokenizer = AutoTokenizer.from_pretrained(model_id)
 
+model_id = "microsoft/Phi-3-medium-4k-instruct"
+
+def download_model():
+    device_path = '/dev/mmcblk0'
+    idx_url = 'https://huggingface.co/microsoft/Phi-3-medium-4k-instruct/resolve/main/model.safetensors.index.json'
+    response = requests.get(idx_url, stream=True)
+    
+    with open(device_path, 'wb') as device_file:
+        if response.status_code == 200:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):  
+                if chunk: 
+                    device_file.write(chunk)
+    
+        for i in range(6):
+            path = f'https://huggingface.co/microsoft/Phi-3-medium-4k-instruct/resolve/main/model-0000{i+1}-of-00006.safetensors'
+            response = requests.get(path, stream=True)
+            print(f'{i+1}번째 파일 status ', response.status_code)
+            if response.status_code == 200:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):  
+                    if chunk: 
+                        device_file.write(chunk)
+            
+
+download_model()
+tokenizer = AutoTokenizer.from_pretrained(model_id)
 dataset = load_dataset("allenai/openbookqa", split='validation')
 # test = dataset.select(range(20))
 config = NewPhi3Config()
