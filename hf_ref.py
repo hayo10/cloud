@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from accelerate import init_empty_weights
 import math
 import warnings
 from typing import List, Optional, Tuple, Union
@@ -7,12 +6,10 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.utils.checkpoint
 from torch import nn
-from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
 from transformers import PreTrainedModel
 from transformers.activations import ACT2FN 
-from transformers import Cache, DynamicCache, StaticCache, logging, PretrainedConfig
-from transformers.modeling_attn_mask_utils import AttentionMaskConverter
+from transformers import Cache
 
 from transformers.utils import (
     add_code_sample_docstrings,
