@@ -8,7 +8,7 @@ Original file is located at
 """
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+from transformers import AutoTokenizer
 from transformers import Phi3Config
 
 import gc
