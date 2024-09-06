@@ -15,7 +15,6 @@
 
 """PyTorch Phi-3 model."""
 from dataclasses import dataclass
-from accelerate import init_empty_weights
 import math
 import warnings
 from typing import List, Optional, Tuple, Union
@@ -23,12 +22,10 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.utils.checkpoint
 from torch import nn
-from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
 from transformers import PreTrainedModel
 from transformers.activations import ACT2FN 
-from transformers import Cache, DynamicCache, StaticCache, logging, PretrainedConfig
-from transformers.modeling_attn_mask_utils import AttentionMaskConverter
+from transformers import Cache,PretrainedConfig
 
 from transformers.utils import (
     add_code_sample_docstrings,
@@ -42,9 +39,7 @@ from transformers.utils import (
 )
 from transformers import Phi3Config
 
-
-if is_flash_attn_2_available():
-    from modeling_flash import _flash_attention_forward
+from transformers.modeling_flash_attention_utils import _flash_attention_forward
 
 _CHECKPOINT_FOR_DOC = "microsoft/Phi-3-mini-4k-instruct"
 _CONFIG_FOR_DOC = "Phi3Config"
@@ -560,10 +555,12 @@ class Phi3Attention(nn.Module):
         bsz, q_len, _ = hidden_states.size()
 
         qkv = self.qkv_proj(hidden_states)
+       
         query_pos = self.num_heads * self.head_dim
         query_states = qkv[..., :query_pos]
         key_states = qkv[..., query_pos : query_pos + self.num_key_value_heads * self.head_dim]
         value_states = qkv[..., query_pos + self.num_key_value_heads * self.head_dim :]
+        
 
         query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
@@ -640,7 +637,8 @@ class Phi3FlashAttention2(Phi3Attention):
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_value: Optional[List] = None,
+        layer_idx : Optional[int] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
@@ -725,9 +723,8 @@ class Phi3FlashAttention2(Phi3Attention):
         # in fp32.
 
         if query_states.dtype == torch.float32:
-            target_dtype = torch.bfloat16
 
-            
+            target_dtype = torch.bfloat16
             query_states = query_states.to(target_dtype)
             key_states = key_states.to(target_dtype)
             value_states = value_states.to(target_dtype)
@@ -737,7 +734,6 @@ class Phi3FlashAttention2(Phi3Attention):
         key_states = key_states.transpose(1, 2)
         value_states = value_states.transpose(1, 2)
 
-  
         attn_output = _flash_attention_forward(
             query_states,
             key_states,
@@ -751,8 +747,7 @@ class Phi3FlashAttention2(Phi3Attention):
             is_causal=self.is_causal,
         )
 
-        attn_output = attn_output.reshape(bsz, q_len, self.hidden_size).contiguous().to(torch.float32)
-
+        attn_output = attn_output.reshape(bsz, q_len, self.hidden_size).contiguous()
         attn_output = self.o_proj(attn_output)
 
         if not output_attentions:
@@ -762,17 +757,15 @@ class Phi3FlashAttention2(Phi3Attention):
 
     
 
-PHI3_ATTENTION_CLASSES = {
-    "eager": Phi3Attention,
-    "flash_attention_2": Phi3FlashAttention2
-}
-
 
 class Phi3DecoderLayer(nn.Module):
-    def __init__(self, config: Phi3Config, layer_idx: int):
+    def __init__(self, config: Phi3Config, block_idx , base_idx):
         super().__init__()
 
         self.config = config
+        self.block_idx = block_idx
+        self.base_idx = base_idx
+        layer_idx = base_idx + block_idx
         self.self_attn = Phi3FlashAttention2(config, layer_idx=layer_idx)
 
         self.mlp = Phi3MLP(config)
@@ -785,9 +778,11 @@ class Phi3DecoderLayer(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
+        start_pos, 
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        layer_idx : Optional[int] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
