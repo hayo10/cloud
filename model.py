@@ -9,12 +9,12 @@ from transformers import Phi3Config
 from transformers.utils import ModelOutput
 from safetensors import safe_open
 import json
-from hf import (
+from hf_ref import (
     _prepare_4d_causal_attention_mask_with_cache_position,
     Phi3RMSNorm,
     Phi3DecoderLayer,
-    NewPhi3Config
 )
+from hf import NewPhi3Config
 from transformers.cache_utils import StaticCache
 import os
 from transformers.utils import ModelOutput
@@ -26,7 +26,8 @@ def save_index_dict():
     """
     여기 바꾸기 -> 다운로드 path에 뒤에 붙이기
     """
-    idx_file_folder = '/nas/user/hayoung/models--microsoft--Phi-3-medium-4k-instruct/snapshots/d194e4e74ffad5a5e193e26af25bcfc80c7f1ffc'
+    cur_dir = os.getcwd()
+    idx_file_folder = cur_dir + '/models--microsoft--Phi-3-medium-4k-instruct/snapshots/d194e4e74ffad5a5e193e26af25bcfc80c7f1ffc'
     idx_file_path = idx_file_folder + '/' + 'model.safetensors.index.json'
 
     global pre_weight_map
@@ -96,7 +97,8 @@ class EmbedModel(nn.Module):
         new_state_dict = {}
         file_list_set = set()
         
-        base_path = '/nas/user/hayoung/models--microsoft--Phi-3-medium-4k-instruct/snapshots/d194e4e74ffad5a5e193e26af25bcfc80c7f1ffc'
+        cur_dir = os.getcwd()
+        base_path = cur_dir + '/models--microsoft--Phi-3-medium-4k-instruct/snapshots/d194e4e74ffad5a5e193e26af25bcfc80c7f1ffc'
         
         file_list_set.add(pre_weight_map['model.embed_tokens.weight'])
 
@@ -148,7 +150,10 @@ class Body(Phi3PreTrainedModel):
         
         new_state_dict = {}
         global pre_weight_map
-        base_path = '/nas/user/hayoung/models--microsoft--Phi-3-medium-4k-instruct/snapshots/d194e4e74ffad5a5e193e26af25bcfc80c7f1ffc'
+        
+        cur_dir = os.getcwd()
+        base_path = cur_dir + '/models--microsoft--Phi-3-medium-4k-instruct/snapshots/d194e4e74ffad5a5e193e26af25bcfc80c7f1ffc'
+        
         partial_model_keys = list(self.layers.state_dict().keys())
         file_list_set = set()
         name_mapping = {}
@@ -216,6 +221,8 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
     # Copied from transformers.models.llama.modeling_llama.LlamaForCausalLM.__init__ with Llama->Phi3
     def __init__(self, config):
         super().__init__(config)
+
+        
         self.norm = Phi3RMSNorm(config.hidden_size).to('cuda')
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False).to('cuda')
         self.config = config
@@ -224,8 +231,9 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         global pre_weight_map
         new_state_dict = {}
         
-        base_path = '/nas/user/hayoung/models--microsoft--Phi-3-medium-4k-instruct/snapshots/d194e4e74ffad5a5e193e26af25bcfc80c7f1ffc'
-
+        cur_dir = os.getcwd()
+        base_path = cur_dir + '/models--microsoft--Phi-3-medium-4k-instruct/snapshots/d194e4e74ffad5a5e193e26af25bcfc80c7f1ffc'
+        
         file_list_set = set()
 
         pre_model_keys = ['model.norm.weight', 'lm_head.weight']
@@ -258,10 +266,15 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
     ) -> Union[Tuple, CausalLMOutputWithPast]:
 
         save_index_dict()
-
+        torch.cuda.nvtx.range_push("embed model load")  
         embed_model = EmbedModel(self.config)
+        torch.cuda.nvtx.range_pop()
+        torch.cuda.nvtx.range_push("embed forward")   
         hidden_states = embed_model(input_ids)
+        torch.cuda.nvtx.range_pop()
+        torch.cuda.nvtx.range_push("del embed model")
         del embed_model
+        torch.cuda.nvtx.range_pop()
 
         past_seen_tokens = 0
         cache_position = torch.arange(
@@ -272,16 +285,26 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         causal_mask = attention_mask
 
         for idx in range(0, 40, self.config.block_size):
+            torch.cuda.nvtx.range_push("body load")
             body = Body(self.config.block_size, idx, self.config)
+            torch.cuda.nvtx.range_pop()
+            torch.cuda.nvtx.range_push("body forward")
             outputs = body(hidden_states, causal_mask, position_ids, None, cache_position)
+            torch.cuda.nvtx.range_pop()
             hidden_states = outputs
-    
+
+            torch.cuda.nvtx.range_push("del body")
             del body
+            torch.cuda.nvtx.range_pop()
 
         hidden_states = outputs
         self.load_weights()
+        torch.cuda.nvtx.range_push("norm")
         hidden_states = self.norm(hidden_states)
+        torch.cuda.nvtx.range_pop()
+        torch.cuda.nvtx.range_push("lm head")
         logits = self.lm_head(hidden_states)
+        torch.cuda.nvtx.range_pop()
         logits = logits.float()
 
         return CausalLMOutputWithPast(
