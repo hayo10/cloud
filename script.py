@@ -1,6 +1,6 @@
 from datasets import load_dataset
 import torch
-from transformers import AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 import gc
 from customed_pipeline import CustomedPipeline
@@ -12,7 +12,9 @@ import os
 import time
 
 torch.random.manual_seed(0)
+cur_dir = os.getcwd()
 model_id = "microsoft/Phi-3-medium-4k-instruct"
+model = AutoModelForCausalLM.from_pretrained(model_id, cache_dir=cur_dir)
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 
 dataset = load_dataset("allenai/openbookqa", split='validation')
