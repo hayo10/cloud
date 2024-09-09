@@ -14,7 +14,7 @@ torch.random.manual_seed(0)
 model_id = "microsoft/Phi-3-medium-4k-instruct"
 
 def download_model():
-    device_path = '/dev/mmcblk0'
+    device_path = '/mnt/sd/phi3'
     idx_url = 'https://huggingface.co/microsoft/Phi-3-medium-4k-instruct/resolve/main/model.safetensors.index.json'
     response = requests.get(idx_url, stream=True)
     
@@ -24,8 +24,7 @@ def download_model():
                 if chunk: 
                     device_file.write(chunk)
 
-        print(os.getcwd)
-        return
+
         for i in range(6):
             path = f'https://huggingface.co/microsoft/Phi-3-medium-4k-instruct/resolve/main/model-0000{i+1}-of-00006.safetensors'
             response = requests.get(path, stream=True)
