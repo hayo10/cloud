@@ -6,6 +6,7 @@ from customed_pipeline import CustomedPipeline
 from hf import NewPhi3Config
 from model import CustomedPhi3ForCausalLM
 import gc
+import os
 import requests
 
 torch.random.manual_seed(0)
@@ -22,7 +23,9 @@ def download_model():
             for chunk in response.iter_content(chunk_size=1024 * 1024):  
                 if chunk: 
                     device_file.write(chunk)
-    
+
+        print(os.getcwd)
+        return
         for i in range(6):
             path = f'https://huggingface.co/microsoft/Phi-3-medium-4k-instruct/resolve/main/model-0000{i+1}-of-00006.safetensors'
             response = requests.get(path, stream=True)
