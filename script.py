@@ -14,18 +14,22 @@ torch.random.manual_seed(0)
 model_id = "microsoft/Phi-3-medium-4k-instruct"
 
 def download_model():
-    device_path = '/mnt/sd/phi3'
+    base_path = '/mnt/sd/phi3/'
+    file_path = base_path + 'model.safetensors.index.json'
     idx_url = 'https://huggingface.co/microsoft/Phi-3-medium-4k-instruct/resolve/main/model.safetensors.index.json'
     response = requests.get(idx_url, stream=True)
     
-    with open(device_path, 'wb') as device_file:
+    with open(file_path, 'wb') as device_file:
         if response.status_code == 200:
             for chunk in response.iter_content(chunk_size=1024 * 1024):  
                 if chunk: 
                     device_file.write(chunk)
 
 
-        for i in range(6):
+    
+    for i in range(6):
+        file_path = base_path + f'model-0000{i+1}-of-00006.safetensors'
+        with open(file_path, 'wb') as device_file:
             path = f'https://huggingface.co/microsoft/Phi-3-medium-4k-instruct/resolve/main/model-0000{i+1}-of-00006.safetensors'
             response = requests.get(path, stream=True)
             print(f'{i+1}번째 파일 status ', response.status_code)
@@ -33,6 +37,7 @@ def download_model():
                 for chunk in response.iter_content(chunk_size=1024 * 1024):  
                     if chunk: 
                         device_file.write(chunk)
+            
             
 
 download_model()
