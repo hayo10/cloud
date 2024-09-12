@@ -4,7 +4,7 @@ from transformers import AutoTokenizer
 import torch
 from customed_pipeline import CustomedPipeline
 from hf import NewPhi3Config
-from model import CustomedPhi3ForCausalLM
+from model_meta import CustomedPhi3ForCausalLM
 import gc
 import os
 import requests
