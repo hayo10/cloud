@@ -20,7 +20,8 @@ from transformers.cache_utils import StaticCache
 import os
 from transformers.utils import ModelOutput
 
-
+device = torch.device('cuda:3')
+torch.cuda.set_device(device) 
 pre_weight_map = {}
 file_num = 1
 tensor_dict = {}
@@ -30,15 +31,13 @@ def load_one_file():
     global pre_weight_map, tensor_dict, file_num
     
     if file_num > 6:
-        print('쉬발')
-    
+        print("파일 번호가 6번을 넘어감")
     file_path = f'/nas/user/hayoung/model-0000{file_num}-of-00006.safetensors'
     
     with safe_open(file_path, framework="pt", device="cuda") as f:
         for key in f.keys():
             tensor_dict[key] = f.get_tensor(key)
     
-    print(file_num,' 번 파일 오픈')
     file_num += 1
     
     
@@ -108,8 +107,8 @@ class EmbedModel(nn.Module):
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
         self.base_path = config.base_path
-
-        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx).to('cuda')
+        global device
+        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx).to(device)
         self.embed_dropout = nn.Dropout(config.embd_pdrop)   
         
     def load_weights(self):
@@ -120,7 +119,6 @@ class EmbedModel(nn.Module):
         
         self.load_state_dict(new_state_dict)
         del tensor_dict['model.embed_tokens.weight']
-        print('embed load 성공')
     
     def forward(
         self,
@@ -144,10 +142,10 @@ class Body(Phi3PreTrainedModel):
 
     def __init__(self, block_size, config: NewPhi3Config):
         super().__init__(config)
-        
+        global device
         self.layers = nn.ModuleList(
             [Phi3DecoderLayer(config, i) for i in range(block_size)]
-        ).to('cuda')
+        ).to(device)
         self._attn_implementation = config._attn_implementation
         self.base_path = config.base_path
         self.gradient_checkpointing = False
@@ -187,7 +185,6 @@ class Body(Phi3PreTrainedModel):
         del partial_model_keys
         
         
-        print('body load 성공')
         
 
 
@@ -225,10 +222,10 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
     # Copied from transformers.models.llama.modeling_llama.LlamaForCausalLM.__init__ with Llama->Phi3
     def __init__(self, config):
         super().__init__(config)
-
+        global device
         
-        self.norm = Phi3RMSNorm(config.hidden_size).to('cuda')
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False).to('cuda')
+        self.norm = Phi3RMSNorm(config.hidden_size).to(device)
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False).to(device)
         self.config = config
         self.base_path = config.base_path
 
@@ -275,7 +272,7 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
 
         past_seen_tokens = 0
         cache_position = torch.arange(
-                past_seen_tokens, past_seen_tokens + hidden_states.shape[1], device='cuda'
+                past_seen_tokens, past_seen_tokens + hidden_states.shape[1], device=device
             )
         position_ids = cache_position.unsqueeze(0)
         
@@ -303,6 +300,8 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         logits = self.lm_head(hidden_states)
         torch.cuda.nvtx.range_pop()
         logits = logits.float()
+
+        print('forward')
 
         return CausalLMOutputWithPast(
             logits=logits
