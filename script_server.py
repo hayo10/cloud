@@ -3,9 +3,9 @@ import torch
 from transformers import AutoTokenizer
 import torch
 from customed_pipeline import CustomedPipeline
-from hf import NewPhi3Config
-from model2 import CustomedPhi3ForCausalLM
-
+from hf_ref import NewPhi3Config
+from model_hide import CustomedPhi3ForCausalLM
+import json
 
 torch.random.manual_seed(0)
 
@@ -13,7 +13,7 @@ model_id = "microsoft/Phi-3-medium-4k-instruct"
 
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 dataset = load_dataset("allenai/openbookqa", split='validation')
-test = dataset.select(range(20))
+test = dataset.select(range(80))
 config = NewPhi3Config()
 model = CustomedPhi3ForCausalLM(config)
 pipe = CustomedPipeline(model, config)
@@ -55,7 +55,7 @@ model_inputs = model_inputs['processed_data']
 messages = [inputs['messages'] for inputs in model_inputs]
 labels = [inputs['answer'] for inputs in model_inputs]
 
-batch_size = 20
+batch_size = 80
 batches = batchify(messages, batch_size)
 tokenized = [tokenizer.apply_chat_template(batch, 
                                           tokenize=True, 
@@ -67,10 +67,16 @@ input_ids = [token['input_ids'] for token in tokenized]
 attention_mask = [token['attention_mask'] for token in tokenized]
 
 
+tensor_list ={'generated_sequence':[]}
 pipe = CustomedPipeline(model, config)
 outputs = pipe.forward(input_ids, attention_mask)
 result = pipe.postprocess(outputs, labels)
 print(result)
+[tensor_list['generated_sequence'].append(o.tolist()) for o in outputs['generated_sequence']]
+with open('output.json', 'w') as json_file:
+    json.dump([tensor_list, result], json_file, indent=4, ensure_ascii=False)
+    
+
 
 # for batch in zip(input_ids, attention_mask):
 #     sentence = generate(batch[0], batch[1], 1, 32000)
