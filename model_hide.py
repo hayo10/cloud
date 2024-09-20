@@ -163,6 +163,7 @@ class Body(Phi3PreTrainedModel):
         partial_model_keys = list(self.layers.state_dict().keys())
         
         names = []
+ 
         for key in partial_model_keys:
             try:
                 num = int(key[0:2])
@@ -178,9 +179,9 @@ class Body(Phi3PreTrainedModel):
             except:
                 load_one_file()
                 new_state_dict[key] = tensor_dict[pre_name]
-        
-        
+         
         self.layers.load_state_dict(new_state_dict)
+        
         
         for name in names:
             del tensor_dict[name]
@@ -283,34 +284,34 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         stream1 = torch.cuda.Stream()
         stream2 = torch.cuda.Stream()
         
+        event1 = torch.cuda.Event()
+        event2 = torch.cuda.Event()
+        
         with torch.cuda.stream(stream1):
             body1 = Body(self.config.block_size, self.config)
             body1.load_weights(0)
             
         with torch.cuda.stream(stream2):
             body2 = Body(self.config.block_size, self.config)
-            
+        
         for idx in range(0, 40, self.config.block_size*2):
             with torch.cuda.stream(stream1):
                 hidden_states = body1(idx, hidden_states, causal_mask, position_ids, None, cache_position)
-                #print(f'stream 1 이 {idx} 블럭 계산중')
+                event1.record()
+                if (idx + self.config.block_size * 2) < 40:
+                    body1.load_weights(idx + self.config.block_size * 2)
+ 
             with torch.cuda.stream(stream2):
                 body2.load_weights(idx + self.config.block_size)
-                #print(f'stream 2 이 {idx+self.config.block_size} 블럭 load 중')
-            torch.cuda.synchronize()
-            
-            with torch.cuda.stream(stream1):
-                if (idx + self.config.block_size*2) == 40:
-                    break
-                body1.load_weights(idx + self.config.block_size*2)
-            with torch.cuda.stream(stream2):
+                event1.wait()
                 hidden_states = body2(idx + self.config.block_size, hidden_states, causal_mask, position_ids, None, cache_position)
-            torch.cuda.synchronize()
-            
+                event2.record()
+            with torch.cuda.stream(stream1):
+                event2.wait()
+                   
         del body1
         del body2
 
-        hidden_states = hidden_states
         self.load_weights()
         hidden_states = self.norm(hidden_states)
         logits = self.lm_head(hidden_states)
