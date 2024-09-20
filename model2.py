@@ -20,7 +20,7 @@ from transformers.cache_utils import StaticCache
 import os
 from transformers.utils import ModelOutput
 
-device = torch.device('cuda:3')
+device = torch.device('cuda:0')
 torch.cuda.set_device(device) 
 pre_weight_map = {}
 file_num = 1

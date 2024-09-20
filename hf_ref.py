@@ -7,9 +7,8 @@ import torch
 import torch.utils.checkpoint
 from torch import nn
 
-from transformers import PreTrainedModel
+from transformers import PreTrainedModel, Cache, PretrainedConfig, Phi3Config
 from transformers.activations import ACT2FN 
-from transformers import Cache
 
 from transformers.utils import (
     add_code_sample_docstrings,
@@ -21,7 +20,6 @@ from transformers.utils import (
     replace_return_docstrings,
     ModelOutput
 )
-from transformers import Phi3Config
 
 from transformers.modeling_flash_attention_utils import _flash_attention_forward
 
@@ -302,11 +300,11 @@ class Phi3MLP(nn.Module):
 
     def forward(self, hidden_states: torch.FloatTensor) -> torch.FloatTensor:
         up_states = self.gate_up_proj(hidden_states)
-
         gate, up_states = up_states.chunk(2, dim=-1)
         up_states = up_states * self.activation_fn(gate)
+        down_states = self.down_proj(up_states)
 
-        return self.down_proj(up_states)
+        return down_states
 
 
 # Copied from transformers.models.llama.modeling_llama.repeat_kv with llama->phi
@@ -475,6 +473,7 @@ class Phi3FlashAttention2(Phi3Attention):
         bsz, q_len, _ = hidden_states.size()
 
         qkv = self.qkv_proj(hidden_states)
+      
         query_pos = self.num_heads * self.head_dim
         query_states = qkv[..., :query_pos]
         key_states = qkv[..., query_pos : query_pos + self.num_key_value_heads * self.head_dim]
@@ -573,9 +572,9 @@ class Phi3FlashAttention2(Phi3Attention):
             is_causal=self.is_causal,
         )
 
-        attn_output = attn_output.reshape(bsz, q_len, self.hidden_size).contiguous().to(torch.float32)
+        attn_output = attn_output.reshape(bsz, q_len, self.hidden_size).contiguous()
+        attn_output = attn_output.to(torch.float32)
         attn_output = self.o_proj(attn_output)
-
         if not output_attentions:
             attn_weights = None
 
@@ -693,3 +692,70 @@ class Phi3PreTrainedModel(PreTrainedModel):
     _supports_sdpa = True
     _supports_cache_class = True
 
+
+class NewPhi3Config(PretrainedConfig):
+    
+    model_type = "phi3"
+    keys_to_ignore_at_inference = ["past_key_values"]
+
+    def __init__(
+        self,
+        base_path = '',
+        vocab_size=32064,
+        block_size = 2,
+        hidden_size=5120,
+        intermediate_size=17920,
+        num_hidden_layers=40,
+        num_attention_heads=40,
+        num_key_value_heads=10,
+        resid_pdrop=0.0,
+        embd_pdrop=0.0,
+        attention_dropout=0.0,
+        hidden_act="silu",
+        max_position_embeddings=4096,
+        original_max_position_embeddings=4096,
+        initializer_range=0.02,
+        rms_norm_eps=1e-5,
+        use_cache=True,
+        tie_word_embeddings=False,
+        rope_theta=10000.0,
+        rope_scaling=None,
+        bos_token_id=1,
+        eos_token_id=32000,
+        pad_token_id=32000,
+        sliding_window=2047,
+        **kwargs,
+    ):
+        self.vocab_size = vocab_size
+        self.hidden_size = hidden_size
+        self.intermediate_size = intermediate_size
+        self.num_hidden_layers = num_hidden_layers
+        self.num_attention_heads = num_attention_heads
+        self.block_size = block_size
+        
+        if num_key_value_heads is None:
+            num_key_value_heads = num_attention_heads
+
+        self.num_key_value_heads = num_key_value_heads
+        self.resid_pdrop = resid_pdrop
+        self.embd_pdrop = embd_pdrop
+        self.attention_dropout = attention_dropout
+        self.hidden_act = hidden_act
+        self.max_position_embeddings = max_position_embeddings
+        self.original_max_position_embeddings = original_max_position_embeddings
+        self.initializer_range = initializer_range
+        self.rms_norm_eps = rms_norm_eps
+        self.use_cache = use_cache
+        self.rope_theta = rope_theta
+        self.rope_scaling = rope_scaling
+        self.sliding_window = sliding_window
+        self.block_size = block_size
+        self.base_path = base_path
+
+        super().__init__(
+            bos_token_id=bos_token_id,
+            eos_token_id=eos_token_id,
+            pad_token_id=pad_token_id,
+            tie_word_embeddings=tie_word_embeddings,
+            **kwargs,
+        )
