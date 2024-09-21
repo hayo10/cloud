@@ -1,12 +1,9 @@
 from typing import List, Optional, Tuple, Union
 from dataclasses import dataclass
-from collections import defaultdict
 import torch
 import torch.utils.checkpoint
 from torch import nn
-from transformers import PreTrainedModel
-import gc
-from transformers import Phi3Config
+from transformers import PreTrainedModel, Phi3Config
 from transformers.utils import ModelOutput
 from safetensors import safe_open
 import json
@@ -14,11 +11,9 @@ from hf_ref import (
     _prepare_4d_causal_attention_mask_with_cache_position,
     Phi3RMSNorm,
     Phi3DecoderLayer,
+    NewPhi3Config
 )
-from hf import NewPhi3Config
 from transformers.cache_utils import StaticCache
-import os
-from transformers.utils import ModelOutput
 
 device = torch.device('cuda:0')
 torch.cuda.set_device(device) 
