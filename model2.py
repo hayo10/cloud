@@ -36,19 +36,6 @@ def load_one_file():
     file_num += 1
     
     
-def save_index_dict():
-    """
-    여기 바꾸기 -> 다운로드 path에 뒤에 붙이기
-    """
-    cur_dir = '/nas/user/hayoung'
-    #idx_file_folder = cur_dir + '/models--microsoft--Phi-3-medium-4k-instruct/snapshots/d194e4e74ffad5a5e193e26af25bcfc80c7f1ffc'
-    idx_file_path = cur_dir + '/' + 'model.safetensors.index.json'
-
-    global pre_weight_map
-    with open(idx_file_path, 'r', encoding='utf-8') as f:
-        data_dict = json.load(f)
-        pre_weight_map = data_dict['weight_map'].copy()
-    
 
 def _prepare_4d_causal_attention_mask_with_cache_position(
     attention_mask: torch.Tensor,
@@ -252,18 +239,12 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
     ) -> Union[Tuple, CausalLMOutputWithPast]:
 
         global file_num
-        save_index_dict()
         file_num = 1
         load_one_file()
-        torch.cuda.nvtx.range_push("embed model load")  
         embed_model = EmbedModel(self.config)
-        torch.cuda.nvtx.range_pop()
-        torch.cuda.nvtx.range_push("embed forward")   
         hidden_states = embed_model(input_ids)
-        torch.cuda.nvtx.range_pop()
-        torch.cuda.nvtx.range_push("del embed model")
+
         del embed_model
-        torch.cuda.nvtx.range_pop()
 
         past_seen_tokens = 0
         cache_position = torch.arange(
@@ -273,27 +254,19 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         
         causal_mask = attention_mask
 
-        torch.cuda.nvtx.range_push("body load")
+      
         body = Body(self.config.block_size, self.config)
-        torch.cuda.nvtx.range_pop()
+
         for idx in range(0, 40, self.config.block_size):
-            torch.cuda.nvtx.range_push("body forward")
             outputs = body(idx, hidden_states, causal_mask, position_ids, None, cache_position)
-            torch.cuda.nvtx.range_pop()
             hidden_states = outputs
 
-        torch.cuda.nvtx.range_push("del body")
         del body
-        torch.cuda.nvtx.range_pop()
 
         hidden_states = outputs
         self.load_weights()
-        torch.cuda.nvtx.range_push("norm")
         hidden_states = self.norm(hidden_states)
-        torch.cuda.nvtx.range_pop()
-        torch.cuda.nvtx.range_push("lm head")
         logits = self.lm_head(hidden_states)
-        torch.cuda.nvtx.range_pop()
         logits = logits.float()
 
         print('forward')
