@@ -59,16 +59,12 @@ class CustomedPipeline():
         # return the processed data as a dict
         return {"processed_data": model_inputs}
     
-    def load_data(self, split, batch_size, dataset_name= "allenai/openbookqa", ):
+    def load_data(self, split, batch_size, dataset_name= "allenai/openbookqa"):
         dataset = load_dataset(dataset_name, split=split)
-        test = dataset.select(range(40))
-        #model_inputs = dataset.map(self.preprocess, batched=True, batch_size=2)
-        model_inputs = test.map(self.preprocess, batched=True, batch_size=20)
+        model_inputs = dataset.map(self.preprocess, batched=True, batch_size=50)
         model_inputs = model_inputs['processed_data']
         messages = [inputs['messages'] for inputs in model_inputs]
         self.labels = [inputs['answer'] for inputs in model_inputs]
-        
-        batch_size = batch_size
         
         batches = self.batchify(messages, batch_size)
         tokenized = [self.tokenizer.apply_chat_template(batch, 
@@ -89,14 +85,12 @@ class CustomedPipeline():
             st = time.time()
             inputs = batch[0].to(self.device)
             masks = batch[1].to(self.device)
-            #prompt_len = batch[0].shape[1]
-    
+            
             generated_sequence = self.model.generate(input_ids=inputs, attention_mask=masks, max_new_tokens=max_new_tokens )
-            result.append(generated_sequence)
             end = time.time()
+            result.append(generated_sequence)
             print('batch load and inference time ', end - st)
             times += end - st
-        print('total inference time ', times)
         return {"generated_sequence": result}
 
     def find_pattern(self, text):
@@ -112,10 +106,9 @@ class CustomedPipeline():
         else:
             return text[idx[0]+2: idx[1]]
 
-    def postprocess(self,model_outputs, clean_up_tokenization_spaces=True):
+    def postprocess(self,model_outputs,  clean_up_tokenization_spaces=True):
 
         result = []
-
         correct = 0
         
         for outputs in model_outputs['generated_sequence']:
@@ -126,13 +119,12 @@ class CustomedPipeline():
                     correct += 1
                 else:
                     decoded_answer = self.tokenizer.decode(text[91:])
-                    result.append([{'wrong':decoded_answer, 'label' : self.labels[i]}])
-        
-        total = len(model_outputs) * len(outputs)
+                result.append([{'generated':decoded_answer, 'label' : self.labels[i]}])
+
         print('맞은 개수', correct)
         print('총 개수 ',len(self.labels))
 
-        print('accuracy : ',correct/total)
+        print('accuracy : ',correct/len(self.labels))
         return result
 
 
