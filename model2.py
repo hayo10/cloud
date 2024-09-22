@@ -15,7 +15,7 @@ from hf_ref import (
 )
 from transformers.cache_utils import StaticCache
 
-device = torch.device('cuda:0')
+device = torch.device('cuda')
 torch.cuda.set_device(device) 
 pre_weight_map = {}
 file_num = 1
@@ -27,7 +27,7 @@ def load_one_file():
     
     if file_num > 6:
         print("파일 번호가 6번을 넘어감")
-    file_path = f'/nas/user/hayoung/model-0000{file_num}-of-00006.safetensors'
+    file_path = f'/sd-card/model-0000{file_num}-of-00006.safetensors'
     
     with safe_open(file_path, framework="pt", device="cuda") as f:
         for key in f.keys():
@@ -88,7 +88,7 @@ class EmbedModel(nn.Module):
         super().__init__()
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
-        self.base_path = config.base_path
+ 
         global device
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx).to(device)
         self.embed_dropout = nn.Dropout(config.embd_pdrop)   
@@ -129,7 +129,6 @@ class Body(Phi3PreTrainedModel):
             [Phi3DecoderLayer(config, i) for i in range(block_size)]
         ).to(device)
         self._attn_implementation = config._attn_implementation
-        self.base_path = config.base_path
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
         self.block_size = block_size
@@ -209,7 +208,6 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         self.norm = Phi3RMSNorm(config.hidden_size).to(device)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False).to(device)
         self.config = config
-        self.base_path = config.base_path
 
     def load_weights(self):
         global pre_weight_map, tensor_dict
