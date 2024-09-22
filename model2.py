@@ -15,25 +15,11 @@ from hf_ref import (
 )
 from transformers.cache_utils import StaticCache
 
-device = torch.device('cuda')
+device = torch.device('cuda:0')
 torch.cuda.set_device(device) 
 pre_weight_map = {}
 file_num = 1
 tensor_dict = {}
-
-def load_one_file():
-    
-    global pre_weight_map, tensor_dict, file_num
-    
-    if file_num > 6:
-        print("파일 번호가 6번을 넘어감")
-    file_path = f'/sd-card/model-0000{file_num}-of-00006.safetensors'
-    
-    with safe_open(file_path, framework="pt", device="cuda") as f:
-        for key in f.keys():
-            tensor_dict[key] = f.get_tensor(key)
-    
-    file_num += 1
     
     
 
@@ -133,6 +119,19 @@ class Body(Phi3PreTrainedModel):
         # Initialize weights and apply final processing
         self.block_size = block_size
 
+    def load_one_file(self):
+    
+        global file_num, tensor_dict
+        
+        if file_num > 6:
+            print("파일 번호가 6번을 넘어감")
+        file_path = self.config.base_path + f'/model-0000{file_num}-of-00006.safetensors'
+        
+        with safe_open(file_path, framework="pt", device="cuda") as f:
+            for key in f.keys():
+                tensor_dict[key] = f.get_tensor(key)
+        
+        file_num += 1
 
     def load_weights(self, idx):
         
@@ -155,7 +154,7 @@ class Body(Phi3PreTrainedModel):
                 new_state_dict[key] = tensor_dict[pre_name]
                 names.append(pre_name)
             except:
-                load_one_file()
+                self.load_one_file()
                 new_state_dict[key] = tensor_dict[pre_name]
         
         
@@ -220,6 +219,20 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         
         del tensor_dict['model.norm.weight']
         del tensor_dict['lm_head.weight']
+    
+    def load_one_file(self):
+    
+        global file_num
+        
+        if file_num > 6:
+            print("파일 번호가 6번을 넘어감")
+        file_path = self.config.base_path + f'/model-0000{file_num}-of-00006.safetensors'
+        
+        with safe_open(file_path, framework="pt", device="cuda") as f:
+            for key in f.keys():
+                tensor_dict[key] = f.get_tensor(key)
+        
+        file_num += 1
         
     def forward(
         self,
@@ -238,7 +251,7 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
 
         global file_num
         file_num = 1
-        load_one_file()
+        self.load_one_file()
         embed_model = EmbedModel(self.config)
         hidden_states = embed_model(input_ids)
 
