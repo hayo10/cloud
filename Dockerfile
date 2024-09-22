@@ -1,10 +1,8 @@
-FROM nvidia/cuda:12.2.2-cudnn8-devel-ubuntu22.04
-FROM pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime
-FROM nvcr.io/nvidia/l4t-jetpack:r36.3.0
-FROM nvcr.io/nvidia/pytorch:23.09-py3
-FROM python:3.10-slim
-
-
+# FROM nvidia/cuda:12.2.2-cudnn8-devel-ubuntu22.04
+# FROM pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime
+# FROM nvcr.io/nvidia/l4t-jetpack:r36.3.0
+# FROM nvcr.io/nvidia/pytorch:23.09-py3
+# FROM python:3.10-slim
 
 WORKDIR /home/hayoung/cloud/workspace
 
