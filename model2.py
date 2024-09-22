@@ -118,6 +118,7 @@ class Body(Phi3PreTrainedModel):
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
         self.block_size = block_size
+        self.config = config
 
     def load_one_file(self):
     
