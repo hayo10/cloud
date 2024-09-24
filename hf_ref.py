@@ -9,7 +9,7 @@ from torch import nn
 
 from transformers import PreTrainedModel, Cache, PretrainedConfig, Phi3Config
 from transformers.activations import ACT2FN 
-
+import torch.nn.functional as F
 from transformers.utils import (
     add_code_sample_docstrings,
     add_start_docstrings,
@@ -21,7 +21,8 @@ from transformers.utils import (
     ModelOutput
 )
 
-from transformers.modeling_flash_attention_utils import _flash_attention_forward
+from flash_attn import flash_attn_func
+from flash_attn.bert_padding import index_first_axis
 
 def _prepare_4d_causal_attention_mask_with_cache_position(
     attention_mask: torch.Tensor,
@@ -110,9 +111,7 @@ class Phi3RotaryEmbedding(nn.Module):
     @torch.no_grad()
     def forward(self, x, position_ids, seq_len=None):
         # x: [bs, num_attention_heads, seq_len, head_size]
-        print('x의 크기 ', x.shape)
         self.inv_freq.to(x.device)
-        print('inv_freq 의 dim ',self.inv_freq.shape)
         inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1)
         position_ids_expanded = position_ids[:, None, :].float()
         # Force float32 since bfloat16 loses precision on long contexts
@@ -121,13 +120,10 @@ class Phi3RotaryEmbedding(nn.Module):
         device_type = device_type if isinstance(device_type, str) and device_type != "mps" else "cpu"
         with torch.autocast(device_type=device_type, enabled=False):
             freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
-            print('계산 후의 freq shape ',freqs.shape)
             emb = torch.cat((freqs, freqs), dim=-1)
-            print('두개 합친 후의 텐서 크기ㅐ', emb.shape)
             cos = emb.cos()
-            print('cos 크기 ',cos.shape)
             sin = emb.sin()
-            print('sin znrl ',sin.shape)
+
         return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
 
 
@@ -387,6 +383,7 @@ class Phi3Attention(nn.Module):
         bsz, q_len, _ = hidden_states.size()
 
         qkv = self.qkv_proj(hidden_states)
+        
         query_pos = self.num_heads * self.head_dim
         query_states = qkv[..., :query_pos]
         key_states = qkv[..., query_pos : query_pos + self.num_key_value_heads * self.head_dim]
@@ -511,34 +508,7 @@ class Phi3FlashAttention2(Phi3Attention):
 
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
-        if past_key_value is not None:
-            # Activate slicing cache only if the config has a value `sliding_windows` attribute
-            cache_has_contents = past_key_value.get_seq_length(self.layer_idx) > 0
-            if (
-                getattr(self.config, "sliding_window", None) is not None
-                and kv_seq_len > self.config.sliding_window
-                and cache_has_contents
-            ):
-                slicing_tokens = 1 - self.config.sliding_window
-
-                past_key = past_key_value[self.layer_idx][0]
-                past_value = past_key_value[self.layer_idx][1]
-
-                past_key = past_key[:, :, slicing_tokens:, :].contiguous()
-                past_value = past_value[:, :, slicing_tokens:, :].contiguous()
-
-                if past_key.shape[-2] != self.config.sliding_window - 1:
-                    raise ValueError(
-                        f"past key must have a shape of (`batch_size, num_heads, self.config.sliding_window-1, head_dim`), got"
-                        f" {past_key.shape}"
-                    )
-
-                if attention_mask is not None:
-                    attention_mask = attention_mask[:, slicing_tokens:]
-                    attention_mask = torch.cat([attention_mask, torch.ones_like(attention_mask[:, -1:])], dim=-1)
-
-            cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}  # Specific to RoPE models
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+  
 
         # repeat k/v heads if n_kv_heads < n_heads
         key_states = repeat_kv(key_states, self.num_key_value_groups)
@@ -550,34 +520,35 @@ class Phi3FlashAttention2(Phi3Attention):
         # therefore the input hidden states gets silently casted in float32. Hence, we need
         # cast them back in the correct dtype just to be sure everything works as expected.
         # This might slowdown training & inference so it is recommended to not cast the LayerNorms
-        # in fp32.
-
-        if query_states.dtype == torch.float32:
-
-            target_dtype = torch.bfloat16
-            query_states = query_states.to(target_dtype)
-            key_states = key_states.to(target_dtype)
-            value_states = value_states.to(target_dtype)
+        # in fp3
             
 
         # Reashape to the expected shape for Flash Attention
         query_states = query_states.transpose(1, 2)
         key_states = key_states.transpose(1, 2)
         value_states = value_states.transpose(1, 2)
+     
+        if query_states.dtype == torch.float32:
 
-        attn_output = _flash_attention_forward(
-            query_states,
-            key_states,
-            value_states,
-            attention_mask,
-            q_len,
-            position_ids=position_ids,
-            dropout=attn_dropout,
-            sliding_window=getattr(self.config, "sliding_window", None),
-            use_top_left_mask=self._flash_attn_uses_top_left_mask,
-            is_causal=self.is_causal,
-        )
-
+            target_dtype = torch.bfloat16
+            query_states = query_states.to(target_dtype)
+            key_states = key_states.to(target_dtype)
+            value_states = value_states.to(target_dtype)
+        
+        
+        attn_output = flash_attn_func(
+                                    query_states,
+                                   key_states,
+                                   value_states,
+                                  dropout_p=0.0, 
+                                  softmax_scale=None, 
+                                  causal=self.is_causal,
+                                  window_size=(-1, -1), 
+                                  alibi_slopes=None, 
+                                  deterministic=False
+                                   )
+        
+        
         attn_output = attn_output.reshape(bsz, q_len, self.hidden_size).contiguous()
         attn_output = attn_output.to(torch.float32)
         attn_output = self.o_proj(attn_output)
