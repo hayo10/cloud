@@ -110,7 +110,9 @@ class Phi3RotaryEmbedding(nn.Module):
     @torch.no_grad()
     def forward(self, x, position_ids, seq_len=None):
         # x: [bs, num_attention_heads, seq_len, head_size]
+        print('x의 크기 ', x.shape)
         self.inv_freq.to(x.device)
+        print('inv_freq 의 dim ',self.inv_freq.shape)
         inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1)
         position_ids_expanded = position_ids[:, None, :].float()
         # Force float32 since bfloat16 loses precision on long contexts
@@ -119,9 +121,13 @@ class Phi3RotaryEmbedding(nn.Module):
         device_type = device_type if isinstance(device_type, str) and device_type != "mps" else "cpu"
         with torch.autocast(device_type=device_type, enabled=False):
             freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
+            print('계산 후의 freq shape ',freqs.shape)
             emb = torch.cat((freqs, freqs), dim=-1)
+            print('두개 합친 후의 텐서 크기ㅐ', emb.shape)
             cos = emb.cos()
+            print('cos 크기 ',cos.shape)
             sin = emb.sin()
+            print('sin znrl ',sin.shape)
         return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
 
 
@@ -702,7 +708,7 @@ class NewPhi3Config(PretrainedConfig):
         self,
         base_path = '',
         vocab_size=32064,
-        block_size = 2,
+        block_size = 4,
         hidden_size=5120,
         intermediate_size=17920,
         num_hidden_layers=40,
