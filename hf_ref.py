@@ -13,16 +13,12 @@ import torch.nn.functional as F
 from transformers.utils import (
     add_code_sample_docstrings,
     add_start_docstrings,
-    add_start_docstrings_to_model_forward,
-    is_flash_attn_2_available,
     is_flash_attn_greater_or_equal_2_10,
-    logging,
-    replace_return_docstrings,
     ModelOutput
 )
 
-from flash_attn import flash_attn_func
-from flash_attn.bert_padding import index_first_axis
+from flash_attn import flash_attn_varlen_func
+from flash_attn.bert_padding import pad_input, index_first_axis
 
 def _prepare_4d_causal_attention_mask_with_cache_position(
     attention_mask: torch.Tensor,
@@ -459,6 +455,50 @@ class Phi3FlashAttention2(Phi3Attention):
         # Beware that with flash_attn<2.1, using q_seqlen != k_seqlen (except for the case q_seqlen == 1) produces a wrong mask (top-left).
         self._flash_attn_uses_top_left_mask = not is_flash_attn_greater_or_equal_2_10()
 
+    def get_unpad_data(self, attention_mask: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, int]:
+        seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
+        indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
+        max_seqlen_in_batch = seqlens_in_batch.max().item()
+        cu_seqlens = F.pad(torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.int32), (1, 0))
+        return (
+            indices,
+            cu_seqlens,
+            max_seqlen_in_batch,
+        )
+    
+    
+    def upad_input(
+            self,
+            query_layer: torch.Tensor,
+            key_layer: torch.Tensor,
+            value_layer: torch.Tensor,
+            attention_mask: torch.Tensor,
+            query_length: int,
+            ):
+        
+        indices_k, cu_seqlens_k, max_seqlen_in_batch_k = self.get_unpad_data(attention_mask)
+        batch_size, kv_seq_len, num_key_value_heads, head_dim = key_layer.shape
+
+        key_layer = index_first_axis(key_layer.reshape(batch_size * kv_seq_len, num_key_value_heads, head_dim), indices_k)
+        value_layer = index_first_axis(
+            value_layer.reshape(batch_size * kv_seq_len, num_key_value_heads, head_dim), indices_k
+        )
+        
+        query_layer = index_first_axis(query_layer.reshape(batch_size * kv_seq_len, -1, head_dim), indices_k)
+        cu_seqlens_q = cu_seqlens_k
+        max_seqlen_in_batch_q = max_seqlen_in_batch_k
+        indices_q = indices_k
+
+
+        return (
+            query_layer,
+            key_layer,
+            value_layer,
+            indices_q,
+            (cu_seqlens_q, cu_seqlens_k),
+            (max_seqlen_in_batch_q, max_seqlen_in_batch_k),
+        )
+        
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -522,32 +562,51 @@ class Phi3FlashAttention2(Phi3Attention):
         # This might slowdown training & inference so it is recommended to not cast the LayerNorms
         # in fp3
             
-
-        # Reashape to the expected shape for Flash Attention
         query_states = query_states.transpose(1, 2)
         key_states = key_states.transpose(1, 2)
         value_states = value_states.transpose(1, 2)
-     
+        
+   
+        batch_size = query_states.shape[0]
+        
+        batch_size = query_states.shape[0]
+        query_states, key_states, value_states, indices_q, cu_seq_lens, max_seq_lens = self.upad_input(
+            query_states, key_states, value_states, attention_mask, q_len
+        )
+        
+        cu_seqlens_q, cu_seqlens_k = cu_seq_lens
+        max_seqlen_in_batch_q, max_seqlen_in_batch_k = max_seq_lens
+
+        
         if query_states.dtype == torch.float32:
 
             target_dtype = torch.bfloat16
             query_states = query_states.to(target_dtype)
             key_states = key_states.to(target_dtype)
             value_states = value_states.to(target_dtype)
+            
         
         
-        attn_output = flash_attn_func(
+        attn_output_unpad = flash_attn_varlen_func(
                                     query_states,
-                                   key_states,
-                                   value_states,
-                                  dropout_p=0.0, 
-                                  softmax_scale=None, 
-                                  causal=self.is_causal,
-                                  window_size=(-1, -1), 
-                                  alibi_slopes=None, 
-                                  deterministic=False
-                                   )
+                                    key_states,
+                                    value_states,
+                                    cu_seqlens_q,
+                                    cu_seqlens_k,
+                                    max_seqlen_q=max_seqlen_in_batch_q,
+                                    max_seqlen_k=max_seqlen_in_batch_k,
+                                    dropout_p=0.0,
+                                    softmax_scale=None,
+                                    causal=self.is_causal,
+                                    window_size=(-1, -1),  # -1 means infinite context window
+                                    softcap=0.0, # 0.0 means deactivated
+                                    alibi_slopes=None,
+                                    deterministic=False,
+                                    return_attn_probs=False,
+                                    block_table=None,
+                                )
         
+        attn_output = pad_input(attn_output_unpad, indices_q, batch_size, q_len)
         
         attn_output = attn_output.reshape(bsz, q_len, self.hidden_size).contiguous()
         attn_output = attn_output.to(torch.float32)
